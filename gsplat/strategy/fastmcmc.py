@@ -251,6 +251,13 @@ class FastMCMCStrategy(Strategy):
         opacities = torch.sigmoid(params["opacities"].flatten())
         importance_score = info["importance_score"]
 
+        # Validate importance_score shape
+        n_gaussians = len(opacities)
+        assert importance_score.shape == (n_gaussians,), (
+            f"importance_score shape mismatch: expected ({n_gaussians},), "
+            f"got {importance_score.shape}"
+        )
+
         # Relocate if low opacity OR low importance (under-reconstructed)
         low_opacity_mask = opacities <= self.min_opacity
         low_importance_mask = importance_score < self.importance_thresh
@@ -325,12 +332,9 @@ class FastMCMCStrategy(Strategy):
 
             # Use MCMC relocation logic
             new_opacities, new_scales = compute_relocation(
-                opacities=opacities[sampled_idxs].unsqueeze(-1),
+                opacities=opacities[sampled_idxs],
                 scales=torch.exp(params["scales"])[sampled_idxs],
-                ratios=torch.bincount(sampled_idxs, minlength=len(opacities))[
-                    sampled_idxs
-                ]
-                + 1,
+                ratios=torch.bincount(sampled_idxs)[sampled_idxs] + 1,
                 binoms=binoms,
             )
 
@@ -344,7 +348,7 @@ class FastMCMCStrategy(Strategy):
 
             def param_fn(name: str, p: Tensor) -> Tensor:
                 if name == "opacities":
-                    p[sampled_idxs] = torch.logit(new_opacities.squeeze(-1))
+                    p[sampled_idxs] = torch.logit(new_opacities)
                 elif name == "scales":
                     p[sampled_idxs] = torch.log(new_scales)
                 p_new = torch.cat([p, p[sampled_idxs]])
@@ -371,6 +375,13 @@ class FastMCMCStrategy(Strategy):
         """FastMCMC pruning: remove Gaussians with low opacity OR high redundancy."""
         opacities = torch.sigmoid(params["opacities"].flatten())
         pruning_score = info["pruning_score"]
+
+        # Validate pruning_score shape
+        n_gaussians = len(opacities)
+        assert pruning_score.shape == (n_gaussians,), (
+            f"pruning_score shape mismatch: expected ({n_gaussians},), "
+            f"got {pruning_score.shape}"
+        )
 
         # Prune if low opacity OR high redundancy
         low_opacity_mask = opacities <= self.min_opacity
