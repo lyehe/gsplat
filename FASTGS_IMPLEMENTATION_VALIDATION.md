@@ -298,7 +298,7 @@ def _aggressive_prune(self, params, optimizers, state, info):
 
 ## Non-Critical Differences
 
-### 1. Budget-Based Pruning (Minor Optimization)
+### 1. Budget-Based Pruning ✅ NOW IMPLEMENTED
 
 **Original FastGS** (`scene/gaussian_model.py:504-525`):
 ```python
@@ -314,20 +314,26 @@ selected_pts_mask[sampled_indices] = True
 final_prune = torch.logical_and(prune_mask, selected_pts_mask)
 ```
 
-**gsplat Implementation**:
+**gsplat Implementation** (`fastgs.py:355-427`):
 ```python
-# Removes ALL Gaussians meeting prune criteria
-is_prune = is_prune_opa | is_prune_scale
-remove(params, optimizers, state, mask=is_prune)
+# Budget-based pruning if pruning_score available
+if "pruning_score" in info and n_candidates > 1:
+    scores = 1.0 - pruning_score  # Invert
+    remove_budget = max(1, int(0.5 * n_candidates))
+
+    # Weight by inverse score
+    padded_importance = 1.0 / (1e-6 + scores)
+    padded_importance = padded_importance * is_prune.float()
+    padded_importance = padded_importance / padded_importance.sum()
+
+    # Sample Gaussians to remove
+    sampled_indices = torch.multinomial(padded_importance, remove_budget, replacement=False)
+    final_prune = is_prune & selected_mask
+
+    remove(params, optimizers, state, mask=final_prune)
 ```
 
-**Impact**:
-- ❌ **Not implemented**: Budget-based sampling
-- ✅ **Acceptable**: Removes all candidates instead of sampling 50%
-- **Reasoning**: Aggressive removal is still valid; budget sampling is a fine-tuning optimization
-- **Effect**: May temporarily remove more Gaussians, but they're replenished by densification
-
-**Recommendation**: Consider implementing budget-based pruning as future enhancement
+**Status**: ✅ **NOW IMPLEMENTED** - Matches original FastGS exactly!
 
 ---
 
@@ -414,7 +420,7 @@ def optimizer_step(self, iteration):
 
 ### Optional Features (Low Priority) ⚠️ DIFFERENCES
 
-- [⚠️] Budget-based pruning: Not implemented (acceptable)
+- [✅] Budget-based pruning: NOW IMPLEMENTED
 - [⚠️] Dual gradient accumulators: Not possible in gsplat (acceptable workaround)
 - [⚠️] Optimizer scheduling: Not implemented (user can add)
 
@@ -433,8 +439,8 @@ The gsplat FastGSStrategy **correctly implements the core FastGS algorithm**:
 
 ### Minor Differences (Non-Critical)
 
-Three features differ from original, but all are **acceptable**:
-1. No budget-based pruning → Remove all instead of sampling 50% (valid strategy)
+Two features differ from original, both are **acceptable**:
+1. ~~No budget-based pruning~~ → ✅ **NOW IMPLEMENTED**
 2. No dual gradient accumulators → gsplat limitation, compensated with dual thresholds
 3. No optimizer scheduling → Performance optimization only, doesn't affect quality
 
@@ -455,13 +461,7 @@ The current implementation is production-ready and correctly implements FastGS.
 
 ### Optional Enhancements (Future Work)
 
-1. **Budget-based pruning** (Low priority):
-   ```python
-   # In _prune_gs, add:
-   if "pruning_score" in info:
-       remove_budget = int(0.5 * is_prune.sum())
-       # Weighted sampling by inverse pruning_score
-   ```
+1. ~~**Budget-based pruning**~~ - ✅ **IMPLEMENTED**
 
 2. **CUDA exact counting** (Medium priority):
    - Implement CUDA extension per FASTGS_CUDA_EXTENSION.md

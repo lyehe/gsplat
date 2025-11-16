@@ -361,7 +361,12 @@ class FastGSStrategy(Strategy):
         step: int,
         info: Dict[str, Any],
     ) -> int:
-        """Standard pruning (low opacity, large scale)."""
+        """Standard pruning with budget-based sampling (FastGS optimization).
+
+        Identifies candidates by low opacity OR large scale, then uses pruning_score
+        to intelligently select which 50% to actually remove, preserving Gaussians
+        that contribute well to reconstruction.
+        """
         is_prune_opa = torch.sigmoid(params["opacities"]).squeeze(-1) < self.prune_opa
         is_prune_scale = (
             torch.exp(params["scales"]).max(dim=-1).values
@@ -369,12 +374,57 @@ class FastGSStrategy(Strategy):
         )
 
         is_prune = is_prune_opa | is_prune_scale
-        n_prune = is_prune.sum().item()
+        n_candidates = is_prune.sum().item()
 
-        if n_prune > 0:
+        if n_candidates == 0:
+            return 0
+
+        # Budget-based pruning if pruning_score available (FastGS optimization)
+        if "pruning_score" in info and n_candidates > 1:
+            pruning_score = info["pruning_score"]
+            n_gaussians = len(params["means"])
+
+            # Invert score: low score = good Gaussian, high score = bad Gaussian
+            # We want to preserve good Gaussians even if they meet prune criteria
+            scores = 1.0 - pruning_score
+
+            # Only remove 50% of candidates, weighted by quality
+            remove_budget = max(1, int(0.5 * n_candidates))
+
+            # Weight by inverse score: bad Gaussians more likely to be removed
+            padded_importance = torch.zeros(n_gaussians, dtype=torch.float32, device=scores.device)
+            padded_importance[:scores.shape[0]] = 1.0 / (1e-6 + scores)
+
+            # Only sample from prune candidates
+            padded_importance = padded_importance * is_prune.float()
+
+            # Normalize to valid probability distribution
+            if padded_importance.sum() > 0:
+                padded_importance = padded_importance / padded_importance.sum()
+
+                # Sample Gaussians to remove
+                sampled_indices = torch.multinomial(
+                    padded_importance,
+                    remove_budget,
+                    replacement=False
+                )
+
+                # Create final prune mask
+                selected_mask = torch.zeros_like(is_prune, dtype=torch.bool)
+                selected_mask[sampled_indices] = True
+                final_prune = is_prune & selected_mask
+
+                n_prune = final_prune.sum().item()
+                if n_prune > 0:
+                    remove(params=params, optimizers=optimizers, state=state, mask=final_prune)
+
+                return n_prune
+
+        # Fallback: remove all candidates if no pruning_score
+        if n_candidates > 0:
             remove(params=params, optimizers=optimizers, state=state, mask=is_prune)
 
-        return n_prune
+        return n_candidates
 
     @torch.no_grad()
     def _aggressive_prune(
