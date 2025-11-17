@@ -358,7 +358,7 @@ if "pruning_score" in info and n_candidates > 1:
 
 ---
 
-### 3. Optimizer Scheduling (Performance Optimization)
+### 3. Optimizer Scheduling ✅ NOW IMPLEMENTED
 
 **Original FastGS** (`scene/gaussian_model.py:225-244`):
 ```python
@@ -373,17 +373,25 @@ def optimizer_step(self, iteration):
             self.optimizer.step()
 ```
 
-**gsplat Implementation**:
-- User controls optimizer stepping in training loop
-- No built-in scheduling
+**gsplat Implementation** (`fastgs.py:156-189`):
+```python
+def should_update_optimizers(self, step: int) -> bool:
+    """Determine if optimizers should be stepped at the given iteration (FastGS scheduling)."""
+    if step <= 15_000:
+        return True  # Every iteration
+    elif step <= 20_000:
+        return step % 32 == 0  # Every 32 iterations
+    else:
+        return step % 64 == 0  # Every 64 iterations
 
-**Impact**:
-- ❌ **Not implemented**: Reduced update frequency after iteration 15k
-- ✅ **Acceptable**: This is a performance optimization, not core to densification
-- **Effect**: Slightly slower training (more optimizer steps), but identical quality
-- **User can implement**: Add scheduling to training loop if desired
+# Usage in training loop:
+if strategy.should_update_optimizers(step):
+    for opt in optimizers.values():
+        opt.step()
+        opt.zero_grad()
+```
 
-**Recommendation**: Document this as optional performance enhancement
+**Status**: ✅ **NOW IMPLEMENTED** - Provides optional helper method for FastGS scheduling
 
 ---
 
@@ -422,7 +430,7 @@ def optimizer_step(self, iteration):
 
 - [✅] Budget-based pruning: NOW IMPLEMENTED
 - [⚠️] Dual gradient accumulators: Not possible in gsplat (acceptable workaround)
-- [⚠️] Optimizer scheduling: Not implemented (user can add)
+- [✅] Optimizer scheduling: NOW IMPLEMENTED (optional helper method)
 
 ---
 
@@ -439,10 +447,10 @@ The gsplat FastGSStrategy **correctly implements the core FastGS algorithm**:
 
 ### Minor Differences (Non-Critical)
 
-Two features differ from original, both are **acceptable**:
+Only ONE feature differs from original:
 1. ~~No budget-based pruning~~ → ✅ **NOW IMPLEMENTED**
-2. No dual gradient accumulators → gsplat limitation, compensated with dual thresholds
-3. No optimizer scheduling → Performance optimization only, doesn't affect quality
+2. No dual gradient accumulators → ⚠️ gsplat architectural limitation, compensated with dual thresholds
+3. ~~No optimizer scheduling~~ → ✅ **NOW IMPLEMENTED** (optional helper method)
 
 ### Confidence Level: **Very High**
 
@@ -468,9 +476,7 @@ The current implementation is production-ready and correctly implements FastGS.
    - Would eliminate approximation in multi-view scoring
    - ~20 lines of CUDA code
 
-3. **Optimizer scheduling** (Low priority):
-   - Document as optional performance enhancement
-   - User can implement in training loop if desired
+3. ~~**Optimizer scheduling**~~ - ✅ **IMPLEMENTED** (optional helper method `should_update_optimizers()`)
 
 ---
 

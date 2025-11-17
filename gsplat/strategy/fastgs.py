@@ -103,9 +103,11 @@ class FastGSStrategy(Strategy):
         ...
         ...     strategy.step_post_backward(params, optimizers, strategy_state, step, info)
         ...
-        ...     for opt in optimizers.values():
-        ...         opt.step()
-        ...         opt.zero_grad()
+        ...     # FastGS optimizer scheduling (optional - for performance)
+        ...     if strategy.should_update_optimizers(step):
+        ...         for opt in optimizers.values():
+        ...             opt.step()
+        ...             opt.zero_grad()
 
     Note:
         Unlike vanilla 3DGS which only uses gradients, FastGS requires the training loop
@@ -115,6 +117,12 @@ class FastGSStrategy(Strategy):
         The original FastGS uses custom CUDA modifications to efficiently compute per-Gaussian
         error counts. This implementation approximates those counts using gsplat's existing
         capabilities. See `fastgs_utils.py` for helper functions.
+
+        For additional performance gains, use `should_update_optimizers(step)` to implement
+        FastGS's optimizer scheduling, which reduces update frequency after iteration 15k:
+        - Iterations 0-15000: Every iteration
+        - Iterations 15001-20000: Every 32 iterations
+        - Iterations 20001+: Every 64 iterations
     """
 
     prune_opa: float = 0.005
@@ -152,6 +160,41 @@ class FastGSStrategy(Strategy):
         super().check_sanity(params, optimizers)
         for key in ["means", "scales", "quats", "opacities"]:
             assert key in params, f"{key} is required in params but missing."
+
+    def should_update_optimizers(self, step: int) -> bool:
+        """Determine if optimizers should be stepped at the given iteration (FastGS scheduling).
+
+        FastGS reduces optimizer update frequency after iteration 15k to save computation:
+        - Iterations 0-15000: Update every iteration
+        - Iterations 15001-20000: Update every 32 iterations
+        - Iterations 20001+: Update every 64 iterations
+
+        Args:
+            step: Current training iteration
+
+        Returns:
+            bool: True if optimizers should be updated, False otherwise
+
+        Example:
+            >>> strategy = FastGSStrategy()
+            >>> for step in range(30000):
+            ...     renders, alphas, info = rasterization(...)
+            ...     loss = compute_loss(renders, gt_images)
+            ...     loss.backward()
+            ...     strategy.step_post_backward(params, optimizers, state, step, info)
+            ...
+            ...     # FastGS optimizer scheduling
+            ...     if strategy.should_update_optimizers(step):
+            ...         for opt in optimizers.values():
+            ...             opt.step()
+            ...             opt.zero_grad()
+        """
+        if step <= 15_000:
+            return True  # Every iteration
+        elif step <= 20_000:
+            return step % 32 == 0  # Every 32 iterations
+        else:
+            return step % 64 == 0  # Every 64 iterations
 
     def step_pre_backward(
         self,
