@@ -28,16 +28,27 @@ from .rendering import (
     rasterization_2dgs_inria_wrapper,
     rasterization_inria_wrapper,
 )
-from .strategy import DefaultStrategy, FastGSStrategy, FastMCMCStrategy, MCMCStrategy, Strategy
+from .rendering_fastgs import DualGradientCapture, rasterization_fastgs
+from .strategy import (
+    DefaultStrategy,
+    FastGSDualStrategy,
+    FastGSStrategy,
+    FastMCMCStrategy,
+    MCMCStrategy,
+    Strategy,
+)
 from .version import __version__
 
 all = [
     "PngCompression",
     "DefaultStrategy",
     "FastGSStrategy",
+    "FastGSDualStrategy",
     "FastMCMCStrategy",
     "MCMCStrategy",
     "Strategy",
+    "rasterization_fastgs",
+    "DualGradientCapture",
     "rasterization",
     "rasterization_2dgs",
     "rasterization_inria_wrapper",
